@@ -1,0 +1,7 @@
+# Runtime dependencies only. Test and lint tools live in requirements-dev.txt.
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.10.3
+prometheus-client==0.21.1
+psycopg[binary,pool]==3.2.3
+redis==5.2.1
