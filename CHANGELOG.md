@@ -2,6 +2,12 @@
 
 All notable changes. Format: [Keep a Changelog](https://keepachangelog.com/), versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.2] - 2026-11-09
+
+### Security
+
+- Update `fastapi` (0.162.2, brings Starlette 1.10), `uvicorn` (0.54.0) and `pydantic` (2.14.3). The previous pins pulled Starlette 0.41.3, which has known HIGH vulnerabilities (CVE-2025-62727 and others) found by an image scan in CI.
+
 ## [0.1.1] - 2026-11-09
 
 ### Fixed
