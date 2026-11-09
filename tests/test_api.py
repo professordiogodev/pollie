@@ -76,3 +76,10 @@ def test_results_with_no_votes_are_zero_not_an_error(client):
     poll = make_poll(client).json()
     body = client.get(f"/polls/{poll['id']}/results").json()
     assert body["total_votes"] == 0 and all(r["percent"] == 0.0 for r in body["results"])
+
+
+def test_voting_while_redis_is_down_answers_503_not_500(client, db, queue):
+    poll = client.post("/polls", json={"question": "Q?", "options": ["a", "b"]}).json()
+    queue.down = True
+    r = client.post(f"/polls/{poll['id']}/votes", json={"option_id": poll["options"][0]["id"], "voter_id": "v"})
+    assert r.status_code == 503 and "try again" in r.json()["detail"]

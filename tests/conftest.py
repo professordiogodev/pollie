@@ -61,15 +61,25 @@ class FakeDB:
 class FakeQueue:
     def __init__(self):
         self.main, self.processing, self.dead, self.healthy = [], [], [], True
+        self.down = False
+
+    def _check(self):
+        from pollie.common.queue import QueueUnavailable
+
+        if self.down:
+            raise QueueUnavailable("connection refused")
 
     def push(self, message):
         import json
+
+        self._check()
 
         self.main.insert(0, json.dumps(message))
 
     def pop(self, timeout):
         import json
 
+        self._check()
         if not self.main:
             return None
         raw = self.main.pop()
@@ -95,6 +105,7 @@ class FakeQueue:
         self.dead.insert(0, raw)
 
     def requeue_stale(self):
+        self._check()
         n = len(self.processing)
         while self.processing:
             self.main.insert(0, self.processing.pop())

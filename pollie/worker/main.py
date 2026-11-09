@@ -19,7 +19,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, G
 from pollie.common.config import Settings
 from pollie.common.db import Database, PostgresDatabase
 from pollie.common.logging_config import configure_logging
-from pollie.common.queue import RedisVoteQueue, VoteQueue
+from pollie.common.queue import QueueUnavailable, RedisVoteQueue, VoteQueue
 
 log = logging.getLogger("pollie.worker")
 
@@ -30,12 +30,16 @@ class Worker:
         self.registry = CollectorRegistry()
         self.processed = Counter("pollie_worker_votes_total", "Votes processed", ["result"], registry=self.registry)
         self.seconds = Histogram("pollie_worker_process_seconds", "Time to process one vote", registry=self.registry)
+        self.queue_errors = Counter(
+            "pollie_worker_queue_errors_total", "Times the queue could not be reached", registry=self.registry
+        )
         self.depth = Gauge("pollie_worker_queue_depth", "Messages per queue", ["queue"], registry=self.registry)
         Gauge("pollie_worker_build_info", "Build information", ["version"], registry=self.registry).labels(
             version=settings.app_version
         ).set(1)
         self.last_beat = time.time()
         self.stop = threading.Event()
+        self._requeued = False
 
     def process_one(self, timeout: int | None = None) -> str | None:
         """Handle at most one message. Returns the result label, or None if the queue was empty."""
@@ -70,12 +74,29 @@ class Worker:
         return result
 
     def run(self) -> None:
-        moved = self.queue.requeue_stale()
-        if moved:
-            log.warning("requeued messages left by a previous worker", extra={"count": moved})
         log.info("worker started", extra={"version": self.settings.app_version})
+        waiting_since: float | None = None
+        failures = 0
         while not self.stop.is_set():
-            self.process_one()
+            try:
+                if not self._requeued:
+                    moved = self.queue.requeue_stale()
+                    self._requeued = True
+                    if moved:
+                        log.warning("requeued messages left by a previous worker", extra={"count": moved})
+                self.process_one()
+                if waiting_since is not None:
+                    log.info("queue is back", extra={"seconds_down": round(time.time() - waiting_since)})
+                    waiting_since, failures = None, 0
+            except QueueUnavailable as exc:
+                # Redis is down or restarting: stay alive, keep trying, and let /readyz say what is wrong.
+                self.last_beat = time.time()
+                self.queue_errors.inc()
+                if waiting_since is None:
+                    waiting_since = time.time()
+                    log.error("queue unavailable, waiting", extra={"error": str(exc)})
+                failures += 1
+                self.stop.wait(min(2**failures, 10))
         log.info("worker stopped")
 
     def healthy(self) -> bool:

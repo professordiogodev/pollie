@@ -2,6 +2,12 @@
 
 All notable changes. Format: [Keep a Changelog](https://keepachangelog.com/), versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-11-09
+
+### Fixed
+- The worker crashed when Redis went away. It now stays alive, waits with back-off, and resumes when Redis is back (`pollie_worker_queue_errors_total`).
+- Voting while Redis was down answered `500`. It now answers `503` with a message the client can act on.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added

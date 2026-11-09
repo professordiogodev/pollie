@@ -87,3 +87,29 @@ def test_metrics_and_health(worker, db, queue):
     assert worker.healthy() is True
     worker.last_beat -= 3600
     assert worker.healthy() is False
+
+
+def test_the_worker_survives_a_redis_outage_and_resumes(settings, db, queue):
+    import threading
+    import time
+
+    pid, oid = seed(db)
+    w = Worker(settings, db, queue)
+    queue.push(message(pid, oid))
+    queue.down = True
+    t = threading.Thread(target=w.run, daemon=True)
+    t.start()
+    time.sleep(0.4)
+    assert t.is_alive() and w.healthy()  # still alive while Redis is down
+    assert (
+        "pollie_worker_queue_errors_total 1.0" in w.metrics_text().decode()
+        or "pollie_worker_queue_errors_total" in w.metrics_text().decode()
+    )
+    queue.down = False
+    for _ in range(60):
+        if db.votes:
+            break
+        time.sleep(0.1)
+    w.stop.set()
+    t.join(timeout=3)
+    assert db.votes == {(pid, "v1"): oid}

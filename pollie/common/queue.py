@@ -6,10 +6,28 @@ API -> `pollie:votes` -> worker. A worker moves a message to `pollie:votes:proce
 
 from __future__ import annotations
 
+import functools
 import json
 from typing import Any, Protocol
 
 MAIN, PROCESSING, DEAD = "pollie:votes", "pollie:votes:processing", "pollie:votes:dead"
+
+
+class QueueUnavailable(Exception):
+    """Redis cannot be reached. Callers decide: the API answers 503, the worker waits and tries again."""
+
+
+def _guarded(method):
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        import redis
+
+        try:
+            return method(self, *args, **kwargs)
+        except redis.exceptions.RedisError as exc:
+            raise QueueUnavailable(str(exc)) from exc
+
+    return wrapper
 
 
 class VoteQueue(Protocol):
@@ -29,9 +47,11 @@ class RedisVoteQueue:
 
         self._r = redis.Redis.from_url(url, decode_responses=True, socket_connect_timeout=2, socket_timeout=10)
 
+    @_guarded
     def push(self, message: dict[str, Any]) -> None:
         self._r.lpush(MAIN, json.dumps(message))
 
+    @_guarded
     def pop(self, timeout: int) -> tuple[str, dict[str, Any]] | None:
         raw = self._r.blmove(MAIN, PROCESSING, timeout, "RIGHT", "LEFT")
         if raw is None:
@@ -42,21 +62,25 @@ class RedisVoteQueue:
             self.dead_letter(raw)
             return None
 
+    @_guarded
     def ack(self, raw: str) -> None:
         self._r.lrem(PROCESSING, 1, raw)
 
+    @_guarded
     def retry(self, raw: str, message: dict[str, Any]) -> None:
         pipe = self._r.pipeline()
         pipe.lrem(PROCESSING, 1, raw)
         pipe.lpush(MAIN, json.dumps(message))
         pipe.execute()
 
+    @_guarded
     def dead_letter(self, raw: str) -> None:
         pipe = self._r.pipeline()
         pipe.lrem(PROCESSING, 1, raw)
         pipe.lpush(DEAD, raw)
         pipe.execute()
 
+    @_guarded
     def requeue_stale(self) -> int:
         """At startup: messages left in `processing` by a crashed worker go back to the queue."""
         moved = 0
@@ -64,6 +88,7 @@ class RedisVoteQueue:
             moved += 1
         return moved
 
+    @_guarded
     def depth(self) -> dict[str, int]:
         return {"queued": self._r.llen(MAIN), "processing": self._r.llen(PROCESSING), "dead": self._r.llen(DEAD)}
 

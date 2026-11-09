@@ -14,7 +14,7 @@ Everything an operator needs to run Pollie. It is true for the code in this repo
 
 All Python processes: Python 3.11 to 3.13, dependencies from `requirements.txt` (runtime only), unprivileged user, no files written. Shutdown is `SIGTERM`; the worker finishes the message in hand.
 
-Start order: PostgreSQL and Redis, then api and worker (both fail at startup if a dependency is unreachable), then web.
+Start order: PostgreSQL and Redis, then api and worker (both fail at startup if a dependency is unreachable; once running they survive a Redis outage and recover by themselves), then web.
 
 ## Health and readiness
 
@@ -48,6 +48,7 @@ JSON, one object per line, on stdout. Each has `ts`, `level`, `service` (`api` o
 | Votes accepted (202) but results do not move | The worker is down or stuck. `pollie_queue_depth{queue="queued"}` grows. | Check the worker's `/healthz` and logs. Start it: the queue drains by itself. |
 | `queued` stays high with a running worker | Worker is slower than the vote rate | Run more workers (they share the queue safely). |
 | `dead` above 0 | Votes for unknown options, malformed messages, or the database failed `WORKER_MAX_ATTEMPTS` times | Inspect: `redis-cli LRANGE pollie:votes:dead 0 -1`. After fixing the cause, `LMOVE pollie:votes:dead pollie:votes RIGHT LEFT` re-queues one. |
+| Votes answer `503 votes cannot be accepted right now` | Redis is unreachable | Fix Redis. Nothing is lost: the vote was refused, the client can retry. The worker stays up, logs `queue unavailable, waiting`, and logs `queue is back` when Redis returns. |
 | `/readyz` 503 on api | PostgreSQL or Redis unreachable | The `checks` field says which. Check network rules, credentials, the service. `/healthz` stays 200 on purpose. |
 | api or worker exits at startup with `DATABASE_URL is required` | Missing environment | Set `DATABASE_URL` and `REDIS_URL`. |
 | Worker logs `could not record vote` repeatedly | PostgreSQL is down or rejecting writes | Votes are retried with back-off and are not lost until the attempts run out. |

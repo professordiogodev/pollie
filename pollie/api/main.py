@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from pollie.common.config import Settings
 from pollie.common.db import Database, PostgresDatabase
 from pollie.common.logging_config import configure_logging
-from pollie.common.queue import RedisResultsCache, RedisVoteQueue, ResultsCache, VoteQueue
+from pollie.common.queue import QueueUnavailable, RedisResultsCache, RedisVoteQueue, ResultsCache, VoteQueue
 
 log = logging.getLogger("pollie.api")
 
@@ -176,7 +176,11 @@ def create_app(
         voter = data.voter_id.strip()
         if not voter or len(voter) > 64:
             raise HTTPException(status_code=422, detail="voter_id must be 1 to 64 characters")
-        app.state.queue.push({"poll_id": poll_id, "option_id": data.option_id, "voter_id": voter, "attempts": 0})
+        try:
+            app.state.queue.push({"poll_id": poll_id, "option_id": data.option_id, "voter_id": voter, "attempts": 0})
+        except QueueUnavailable as exc:
+            log.error("vote queue unavailable", extra={"error": str(exc)})
+            raise HTTPException(status_code=503, detail="votes cannot be accepted right now, try again shortly") from exc
         votes_accepted.inc()
         return {"status": "queued"}
 
